@@ -202,15 +202,12 @@
     .toran { height: 70px; }
     .msg, .hint, .kandil { display: none; }
   }
-  @media (prefers-reduced-motion: reduce) {
-    .strand, .rangoli, .flame, .diya::before, .kandil { animation: none; }
-  }
 </style>
 </head>
 <body>
 <script>
-  /* Motion plays unless the viewer's device asks for reduced motion; opening the page with #play forces it on. */
-  window.stillMode = matchMedia('(prefers-reduced-motion: reduce)').matches && location.hash !== '#play';
+  /* The animation always plays, even on devices set to reduce motion; opening the page with #still shows the still scene. */
+  window.stillMode = location.hash === '#still';
   if (!window.stillMode) document.body.classList.add('pre');
 </script>
 <canvas id="stars" aria-hidden="true"></canvas>
