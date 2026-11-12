@@ -174,7 +174,39 @@
     background: rgba(23, 10, 43, .55);
     box-shadow: 0 0 0 1px rgba(255, 243, 214, .45);
   }
-  .pre:not(.s4) .snd { opacity: 0; }
+  .pre:not(.s4) main .snd { opacity: 0; }
+  .to {
+    font-family: var(--font-display);
+    font-size: clamp(1.7rem, 6vw, 3rem); line-height: 1.1;
+    color: var(--cream); overflow-wrap: anywhere;
+    text-shadow: 0 0 16px rgba(255, 170, 40, .7), 0 2px 0 rgba(60, 10, 20, .8);
+  }
+  .from {
+    font-family: var(--font-display);
+    font-size: clamp(1.1rem, 3.4vw, 1.5rem);
+    color: var(--gold);
+    text-shadow: 0 1px 8px rgba(20, 5, 30, .95);
+  }
+  .to, .from { transition: opacity .9s, translate .9s; }
+  .pre:not(.s3) .to, .pre:not(.s4) .from { opacity: 0; translate: 0 14px; }
+
+  /* Name step shown before the greeting when the link carries no name */
+  #gate { position: absolute; inset: 0; z-index: 5; display: grid; place-items: center; padding: 20px; }
+  #gate[hidden] { display: none; }
+  .gate-box {
+    display: flex; flex-direction: column; align-items: center; gap: 14px;
+    width: 100%; max-width: 22rem; padding: 26px 24px; text-align: center;
+    border-radius: 18px; background: rgba(23, 10, 43, .82);
+    box-shadow: 0 0 0 1px rgba(255, 201, 77, .5), 0 0 40px rgba(255, 150, 40, .25);
+  }
+  .gate-box label { font-family: var(--font-display); font-size: 1.35rem; line-height: 1.3; color: var(--gold); text-wrap: balance; }
+  .gate-box input {
+    width: 100%; padding: 10px 14px; text-align: center;
+    font: 1.1rem var(--font-body); color: #2a0d18;
+    background: #fff8e6; border: 2px solid var(--gold); border-radius: 10px;
+  }
+  .gate-box input:focus-visible { outline: 3px solid var(--cream); outline-offset: 2px; }
+  .gate-box button { margin-top: 0; }
   .hint { font-size: .9rem; opacity: .8; text-shadow: 0 1px 6px rgba(20, 5, 30, .95); }
 
   /* Diyas */
@@ -229,8 +261,10 @@
   <svg class="rangoli" id="rangoli" viewBox="-130 -130 260 260" aria-hidden="true"></svg>
   <div class="card">
     <h1>Happy Diwali</h1>
+    <p class="to" id="to" hidden></p>
     <p class="hindi" lang="hi">शुभ दीपावली</p>
     <p class="msg">May the glow of every diya bring joy, good health and prosperity to you and your family.</p>
+    <p class="from" id="from"></p>
     <button id="fire" type="button">Light a firecracker</button>
     <p class="hint">or tap anywhere in the sky</p>
     <button id="snd" class="snd" type="button" aria-pressed="true">Sound: on</button>
@@ -238,6 +272,15 @@
 </main>
 
 <div class="diyas" id="diyas" aria-hidden="true"></div>
+
+<form id="gate" hidden>
+  <div class="gate-box">
+    <label for="name">Someone sent you a Diwali greeting. What is your name?</label>
+    <input id="name" type="text" maxlength="24" autocomplete="given-name" placeholder="Your name">
+    <button type="submit">Open my greeting</button>
+    <button type="button" class="snd" id="skip">Skip</button>
+  </div>
+</form>
 
 <script>
 (function () {
@@ -284,6 +327,18 @@
       return '<span class="ch" style="--i:' + (ci++) + '">' + c + '</span>';
     }).join('') + '</span>';
   }).join(' ');
+
+  /* ---------- Names: ?to=Name in the link, or typed by the viewer; ?from=Name overrides the sender ---------- */
+  var clean = function (s) { return (s || '').replace(/[<>]/g, '').trim().slice(0, 24); };
+  var query = new URLSearchParams(location.search);
+  var toName = clean(query.get('to')), fromName = clean(query.get('from')) || 'Pritesh';
+  function showNames() {
+    var toEl = document.getElementById('to');
+    toEl.textContent = toName; toEl.hidden = !toName;
+    document.getElementById('from').textContent = 'from ' + fromName;
+    if (toName) h1.setAttribute('aria-label', title + ' ' + toName);
+  }
+  showNames();
 
   /* ---------- Rangoli ---------- */
   function petals(count, len, wid, fill, stroke, offset) {
@@ -565,7 +620,7 @@
   if (!reduced) {
     window.addEventListener('pointerdown', function (e) {
       unlock();
-      if (e.target.closest('button')) return;
+      if (!started || e.target.closest('button')) return;
       launch(e.clientX, Math.min(e.clientY, H * .8), true);
     });
     window.addEventListener('pointerup', unlock);
@@ -587,6 +642,9 @@
 
     /* Opening sequence: a sparkler flies in, lights the rangoli, writes the greeting,
        the toran and kandils drop, the diyas catch one by one, then a volley goes up. */
+    var started = false;
+    var startIntro = function (loud) {
+    started = true;
     var body = document.body;
     var at = function (ms, fn) { setTimeout(function () { try { fn(); } catch (err) {} }, ms); };
     var centre = function (el) { var b = el.getBoundingClientRect(); return [b.left + b.width / 2, b.top + b.height / 2, b]; };
@@ -599,6 +657,7 @@
       body.classList.add('s1');
       sparkle(mid[0], mid[1], 170, 9);
       explode(mid[0], mid[1], 45);
+      if (loud) bang();
     });
     at(1950, function () { body.classList.add('s2'); });
     [].forEach.call(document.querySelectorAll('.ch'), function (ch, i) {
@@ -621,16 +680,37 @@
     at(4500, function () {
       body.classList.add('s4');
       for (var i = 0; i < 8; i++) {
-        (function (i) { at(i * 140, function () { launch(W * (.1 + .8 * i / 7), H * rand(.14, .4)); }); })(i);
+        (function (i) { at(i * 140, function () { launch(W * (.1 + .8 * i / 7), H * rand(.14, .4), loud && i % 2 === 0); }); })(i);
       }
       fountains.push({ x: W * .12, t: 120 }, { x: W * .88, t: 120 });
-      chakri(W * .5);
+      chakri(W * .5, loud);
     });
     at(6000, function () {
       introDone = true;
       body.classList.remove('pre', 's1', 's2', 's3', 's4');
     });
+    };
+
     requestAnimationFrame(step);
+
+    /* With a name in the link the greeting opens at once; otherwise the viewer is asked first. */
+    var gate = document.getElementById('gate');
+    var openGreeting = function (name) {
+      toName = clean(name);
+      showNames();
+      gate.hidden = true;
+      unlock();
+      startIntro(true);
+    };
+    if (toName) startIntro(false);
+    else {
+      gate.hidden = false;
+      gate.addEventListener('submit', function (e) {
+        e.preventDefault();
+        openGreeting(document.getElementById('name').value);
+      });
+      document.getElementById('skip').addEventListener('click', function () { openGreeting(''); });
+    }
   } else {
     document.getElementById('fire').hidden = true;
     document.getElementById('snd').hidden = true;
