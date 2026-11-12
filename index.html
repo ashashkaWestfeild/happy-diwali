@@ -434,7 +434,7 @@
           for (i = 0; i < irLen; i++) ird[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / irLen, 3.2);
         }
         var conv = actx.createConvolver(); conv.buffer = ir;
-        var wet = actx.createGain(); wet.gain.value = .5;
+        var wet = actx.createGain(); wet.gain.value = .2;
         bus.connect(conv); conv.connect(wet); wet.connect(master);
         /* plain noise, and a strip of sparse clicks for the crackle after each burst */
         noiseBuf = actx.createBuffer(1, sr * 2, sr);
@@ -453,6 +453,7 @@
         }
       }
       if (actx.state === 'suspended') actx.resume();
+      decodeSample();
     } catch (err) { console.warn(err); }
   }
   function audible() { return soundOn && actx && bus && actx.state === 'running'; }
@@ -493,10 +494,55 @@
     } catch (err) { console.warn(err); }
   }
   /* Aerial shell: sharp crack, a body that darkens as it fades, a long low rumble, then crackle */
+  /* Real firecracker recording: "Fire crackers - New Year 2023" by Almanta, Wikimedia Commons, CC0.
+     boom.mp3 holds four bangs and two crackle bursts, one per 1.6 s slot. */
+  var sampleData = null, sample = null, onsets = [];
+  function decodeSample() {
+    if (!actx || !sampleData || sample) return;
+    var raw = sampleData; sampleData = null;
+    try {
+      actx.decodeAudioData(raw, function (buf) {
+        var ch = buf.getChannelData(0), sr = buf.sampleRate;
+        for (var n = 0; n < 6; n++) {
+          var s = Math.floor(n * 1.6 * sr), e = Math.min(ch.length, s + Math.floor(1.6 * sr)), i = s;
+          while (i < e && Math.abs(ch[i]) < .15) i++;
+          onsets[n] = Math.max(0, i / sr - .006);
+        }
+        sample = buf;
+      }, function () {});
+    } catch (err) { console.warn(err); }
+  }
+  fetch('boom.mp3').then(function (r) { return r.ok ? r.arrayBuffer() : null; })
+    .then(function (b) { sampleData = b; decodeSample(); }).catch(function () {});
+
+  function playClip(n, o) {
+    var t = actx.currentTime + (o.delay || 0);
+    var src = actx.createBufferSource(); src.buffer = sample; src.playbackRate.value = o.rate || 1;
+    var shelf = actx.createBiquadFilter(); shelf.type = 'highshelf';
+    shelf.frequency.value = 2500; shelf.gain.value = o.shelf || 0;
+    var g = actx.createGain(); g.gain.value = o.gain;
+    src.connect(shelf); shelf.connect(g); toBus(g, o.pan);
+    src.start(t, onsets[n], n < 4 ? 1.45 : 1.1);
+  }
+  /* the sharp report: full-band noise with an instant attack, plus one quick slap-back */
+  function crack(pan, delay, peak) {
+    burst({ type: 'highpass', f0: 1200, f1: 1200, peak: peak, attack: .001, dur: .13, delay: delay, pan: pan });
+  }
+
   function bang(x) {
     if (!audible()) return;
+    if (sample) {
+      try {
+        var p = panOf(x);
+        crack(p, 0, .9); crack(p, .09, .3);
+        playClip(Math.floor(Math.random() * 4), { gain: 1, shelf: 9, rate: rand(.95, 1.15), pan: p });
+        playClip(4 + Math.floor(Math.random() * 2), { gain: .6, shelf: 4, rate: rand(.9, 1.2), delay: .18, pan: p });
+      } catch (err) { console.warn(err); }
+      return;
+    }
     try {
       var t = actx.currentTime, pan = panOf(x), v = rand(.85, 1.15);
+      crack(pan, 0, .9); crack(pan, .09, .3);
       burst({ type: 'highpass', f0: 1800, f1: 900, peak: .55, attack: .002, dur: .09, pan: pan });
       burst({ type: 'lowpass', f0: 2600 * v, f1: 140, peak: .8, attack: .004, dur: .9, pan: pan });
       burst({ type: 'lowpass', f0: 220, f1: 60, peak: .6, attack: .02, dur: 1.9, pan: pan });
