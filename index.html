@@ -425,8 +425,9 @@
         var sr = actx.sampleRate, i, k;
         /* master chain: bus -> (dry + open-air echo) -> compressor -> speakers */
         var comp = actx.createDynamicsCompressor();
-        comp.threshold.value = -14; comp.ratio.value = 6; comp.connect(actx.destination);
-        var master = actx.createGain(); master.gain.value = .9; master.connect(comp);
+        comp.threshold.value = -4; comp.knee.value = 0; comp.ratio.value = 20;
+        comp.attack.value = .001; comp.release.value = .1; comp.connect(actx.destination);
+        var master = actx.createGain(); master.gain.value = 1; master.connect(comp);
         bus = actx.createGain(); bus.connect(master);
         var irLen = Math.floor(sr * 2.4), ir = actx.createBuffer(2, irLen, sr);
         for (var chn = 0; chn < 2; chn++) {
@@ -434,7 +435,7 @@
           for (i = 0; i < irLen; i++) ird[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / irLen, 3.2);
         }
         var conv = actx.createConvolver(); conv.buffer = ir;
-        var wet = actx.createGain(); wet.gain.value = .2;
+        var wet = actx.createGain(); wet.gain.value = .12;
         bus.connect(conv); conv.connect(wet); wet.connect(master);
         /* plain noise, and a strip of sparse clicks for the crackle after each burst */
         noiseBuf = actx.createBuffer(1, sr * 2, sr);
@@ -524,34 +525,48 @@
     src.connect(shelf); shelf.connect(g); toBus(g, o.pan);
     src.start(t, onsets[n], n < 4 ? 1.45 : 1.1);
   }
-  /* the sharp report: full-band noise with an instant attack, plus one quick slap-back */
-  function crack(pan, delay, peak) {
-    burst({ type: 'highpass', f0: 1200, f1: 1200, peak: peak, attack: .001, dur: .13, delay: delay, pan: pan });
+  /* A close firecracker report: hard-clipped full-band noise that starts at full level and dies away
+     with time constant tau. lp > 0 dulls it, which is how the later echoes are made. */
+  var clipCurve = new Float32Array(1024);
+  for (var cc = 0; cc < 1024; cc++) clipCurve[cc] = Math.tanh(4 * (cc / 511.5 - 1));
+  function shot(ctx, dest, buf, t, peak, tau, lp) {
+    var src = ctx.createBufferSource(); src.buffer = buf; src.loop = true;
+    var sh = ctx.createWaveShaper(); sh.curve = clipCurve;
+    var hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 250;
+    var g = ctx.createGain();
+    g.gain.setValueAtTime(peak, t); g.gain.setTargetAtTime(0, t + .004, tau);
+    src.connect(sh); sh.connect(hp);
+    if (lp) {
+      var f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = lp;
+      hp.connect(f); f.connect(g);
+    } else hp.connect(g);
+    g.connect(dest);
+    src.start(t, Math.random()); src.stop(t + tau * 8 + .05);
   }
+  window.diwaliSound = { shot: shot };
 
   function bang(x) {
     if (!audible()) return;
-    if (sample) {
-      try {
-        var p = panOf(x);
-        crack(p, 0, .9); crack(p, .09, .3);
-        playClip(Math.floor(Math.random() * 4), { gain: 1, shelf: 9, rate: rand(.95, 1.15), pan: p });
-        playClip(4 + Math.floor(Math.random() * 2), { gain: .6, shelf: 4, rate: rand(.9, 1.2), delay: .18, pan: p });
-      } catch (err) { console.warn(err); }
-      return;
-    }
     try {
-      var t = actx.currentTime, pan = panOf(x), v = rand(.85, 1.15);
-      crack(pan, 0, .9); crack(pan, .09, .3);
-      burst({ type: 'highpass', f0: 1800, f1: 900, peak: .55, attack: .002, dur: .09, pan: pan });
-      burst({ type: 'lowpass', f0: 2600 * v, f1: 140, peak: .8, attack: .004, dur: .9, pan: pan });
-      burst({ type: 'lowpass', f0: 220, f1: 60, peak: .6, attack: .02, dur: 1.9, pan: pan });
+      var t = actx.currentTime, pan = panOf(x), dest = bus;
+      if (actx.createStereoPanner) { dest = actx.createStereoPanner(); dest.pan.value = pan; dest.connect(bus); }
+      /* the report (a bright crack over a mid-range body), then three echoes, each quieter and duller */
+      shot(actx, dest, noiseBuf, t, .42, .07, 5000);
+      shot(actx, dest, noiseBuf, t, .7, .1, 1500);
+      shot(actx, dest, noiseBuf, t + .11, .21, .06, 5000);
+      shot(actx, dest, noiseBuf, t + .24, .13, .06, 3000);
+      shot(actx, dest, noiseBuf, t + .41, .07, .07, 2000);
       var o = actx.createOscillator(), g = actx.createGain();
-      o.frequency.setValueAtTime(75 * v, t); o.frequency.exponentialRampToValueAtTime(30, t + .4);
-      g.gain.setValueAtTime(.5, t); g.gain.exponentialRampToValueAtTime(.0001, t + .45);
-      o.connect(g); toBus(g, pan); o.start(t); o.stop(t + .5);
-      burst({ buf: crackBuf, type: 'highpass', f0: 2500, f1: 4500, peak: .35, attack: .25, dur: 1.5,
-              delay: .2, pan: pan, rate: rand(.8, 1.3) });
+      o.frequency.setValueAtTime(95, t); o.frequency.exponentialRampToValueAtTime(35, t + .22);
+      g.gain.setValueAtTime(.42, t); g.gain.exponentialRampToValueAtTime(.0001, t + .28);
+      o.connect(g); g.connect(dest); o.start(t); o.stop(t + .3);
+      /* recorded boom kept low for body; recorded and synthetic crackle on top */
+      if (sample) {
+        playClip(Math.floor(Math.random() * 4), { gain: .3, shelf: 6, rate: rand(.95, 1.15), pan: pan });
+        playClip(4, { gain: .6, shelf: 3, rate: rand(.9, 1.2), delay: .15, pan: pan });
+      }
+      burst({ buf: crackBuf, type: 'highpass', f0: 3000, f1: 5000, peak: .45, attack: .05, dur: 1.2,
+              delay: .12, pan: pan, rate: rand(.8, 1.3) });
     } catch (err) { console.warn(err); }
   }
 
